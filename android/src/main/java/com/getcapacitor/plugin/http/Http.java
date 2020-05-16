@@ -1,5 +1,7 @@
 package com.getcapacitor.plugin.http;
 
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.util.Log;
@@ -68,6 +70,7 @@ public class Http extends Plugin {
       case "DELETE":
       case "PATCH":
       case "POST":
+        mutate(call, url, method, headers);
       case "PUT":
         mutate(call, url, method, headers);
         return;
@@ -382,7 +385,18 @@ public class Http extends Plugin {
     Log.d(getLogTag(), "GET request completed, got data");
 
     String contentType = conn.getHeaderField("Content-Type");
+    String authorized = conn.getHeaderField("Authorized");
 
+    if (authorized != null) {
+      if (authorized == "save") {
+        this.saveAuthToken("access_token", conn.getHeaderField("access_token"));
+        this.saveAuthToken("refresh_token", conn.getHeaderField("refresh_token"));
+      }
+      else if (authorized == "delete") {
+        this.removeAuthTokens();
+      }
+    }
+    
     if (contentType != null) {
       if (contentType.contains("application/json")) {
         try {
@@ -472,11 +486,43 @@ public class Http extends Plugin {
       }
     }
   }
+
   private URI getUri(String url) {
     try {
       return new URI(url);
     } catch (Exception ex) {
       return null;
     }
+  }
+
+  private Boolean saveAuthToken(String key, String token) 
+  {
+    SharedPreferences pref = getContext().getSharedPreferences("auth", 0); // 0 - for private mode
+    Editor editor = pref.edit();
+    editor.putString(key, token);
+    editor.commit();
+
+    return true;
+  }
+
+  private String getAuthToken(String tokenKey)
+  {
+    String accessToken = null;
+
+    try {
+      SharedPreferences pref = getContext().getSharedPreferences("auth", 0); // 0 - for private mode
+      accessToken = pref.getString(tokenKey, tokenKey);
+    }
+    catch (Exception $e) {
+      //
+    }
+    
+    return accessToken;
+  }
+
+  private Boolean removeAuthTokens() {
+    this.saveAuthToken("access_token", "");
+    this.saveAuthToken("refresh_token", "");
+    return true;
   }
 }
