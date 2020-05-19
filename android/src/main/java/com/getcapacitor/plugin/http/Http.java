@@ -1,5 +1,7 @@
 package com.getcapacitor.plugin.http;
 
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.util.Log;
@@ -68,6 +70,8 @@ public class Http extends Plugin {
       case "DELETE":
       case "PATCH":
       case "POST":
+        mutate(call, url, method, headers);
+        return;
       case "PUT":
         mutate(call, url, method, headers);
         return;
@@ -93,7 +97,6 @@ public class Http extends Plugin {
     }
   }
 
-
   private void mutate(PluginCall call, String urlString, String method, JSObject headers) {
     try {
       Integer connectTimeout = call.getInt("connectTimeout");
@@ -103,6 +106,15 @@ public class Http extends Plugin {
       URL url = new URL(urlString);
 
       HttpURLConnection conn = makeUrlConnection(url, method, connectTimeout, readTimeout, headers);
+
+      // Add refresh token to data if the header is set to "refresh".
+      if (urlString.contains("refresh")) {
+        String refreshToken = this.getAuthToken("refresh_token");
+        String accessToken = this.getAuthToken("access_token");
+        data.put("refresh_token", refreshToken);
+        data.put("access_token", accessToken);
+        Log.d(getLogTag(), "HTTP - refresh_token: "  + refreshToken);
+      }
 
       conn.setDoOutput(true);
 
@@ -134,6 +146,13 @@ public class Http extends Plugin {
       conn.setReadTimeout(readTimeout);
     }
 
+    // Add authorization header if an access_token is present.
+    String accessToken = this.getAuthToken("access_token");
+    if (accessToken != null) {
+        headers.put("Authorization", "Bearer " + accessToken);
+        Log.d(getLogTag(), "access_token: "  + accessToken);
+    }
+    
     setRequestHeaders(conn, headers);
 
     return conn;
@@ -382,7 +401,23 @@ public class Http extends Plugin {
     Log.d(getLogTag(), "GET request completed, got data");
 
     String contentType = conn.getHeaderField("Content-Type");
+    String authorized = conn.getHeaderField("Authorized");
+    
+    Log.d(getLogTag(), "HTTP - Authorized action state: " + authorized);
 
+    if (authorized != null) {
+      if (authorized.contains("save")) {
+        Log.d(getLogTag(), "HTTP - Save tokens: " + authorized);
+        this.saveAuthToken("access_token", conn.getHeaderField("access_token"));
+        Log.d(getLogTag(), "HTTP - Save tokens access_token: " + conn.getHeaderField("access_token"));
+        this.saveAuthToken("refresh_token", conn.getHeaderField("refresh_token"));
+        Log.d(getLogTag(), "HTTP - Save tokens refresh_token: " + conn.getHeaderField("refresh_token"));
+      }
+      else if (authorized.contains("delete")) {
+        this.removeAuthTokens();
+      }
+    }
+    
     if (contentType != null) {
       if (contentType.contains("application/json")) {
         try {
@@ -472,11 +507,45 @@ public class Http extends Plugin {
       }
     }
   }
+
   private URI getUri(String url) {
     try {
       return new URI(url);
     } catch (Exception ex) {
       return null;
     }
+  }
+
+  private Boolean saveAuthToken(String key, String token) 
+  {
+    SharedPreferences pref = getContext().getSharedPreferences("auth", 0); // 0 - for private mode
+    Editor editor = pref.edit();
+    editor.putString(key, token);
+    editor.commit();
+
+    return true;
+  }
+
+  private String getAuthToken(String tokenKey)
+  {
+    String accessToken = null;
+
+    try {
+      SharedPreferences pref = getContext().getSharedPreferences("auth", 0); // 0 - for private mode
+      accessToken = pref.getString(tokenKey, null);
+    }
+    catch (Exception $e) {
+      //
+    }
+    
+    Log.d(getLogTag(), "HTTP - get token: " + accessToken);
+
+    return accessToken;
+  }
+
+  private Boolean removeAuthTokens() {
+    this.saveAuthToken("access_token", "");
+    this.saveAuthToken("refresh_token", "");
+    return true;
   }
 }
