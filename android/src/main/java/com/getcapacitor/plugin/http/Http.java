@@ -53,6 +53,7 @@ public class Http extends Plugin {
   @Override
   public void load() {
     cookieManager = android.webkit.CookieManager.getInstance();
+    accessToken = this.getAuthToken(Http.AUTH_ACCESS_TOKEN);
   }
 
   @PluginMethod()
@@ -61,6 +62,9 @@ public class Http extends Plugin {
     String method = call.getString("method");
     JSObject headers = call.getObject("headers");
     JSObject params = call.getObject("params");
+
+    // Auth
+    this.logoutIfActioned(url);
 
     switch (method) {
       case "GET":
@@ -105,17 +109,11 @@ public class Http extends Plugin {
 
       URL url = new URL(urlString);
 
+      // Auth
+      data = this.checkUrlForActionsAndModifyResponseData(urlString, data);
+
       HttpURLConnection conn = makeUrlConnection(url, method, connectTimeout, readTimeout, headers);
-
-      // Add refresh token to data if the header is set to "refresh".
-      if (urlString.contains("refresh")) {
-        String refreshToken = this.getAuthToken("refresh_token");
-        String accessToken = this.getAuthToken("access_token");
-        data.put("refresh_token", refreshToken);
-        data.put("access_token", accessToken);
-        Log.d(getLogTag(), "HTTP - refresh_token: "  + refreshToken);
-      }
-
+      
       conn.setDoOutput(true);
 
       setRequestBody(conn, data, headers);
@@ -146,12 +144,8 @@ public class Http extends Plugin {
       conn.setReadTimeout(readTimeout);
     }
 
-    // Add authorization header if an access_token is present.
-    String accessToken = this.getAuthToken("access_token");
-    if (accessToken != null) {
-        headers.put("Authorization", "Bearer " + accessToken);
-        Log.d(getLogTag(), "access_token: "  + accessToken);
-    }
+    // Auth
+    headers = this.appendBearerIfAvailable(headers);
     
     setRequestHeaders(conn, headers);
 
@@ -401,37 +395,39 @@ public class Http extends Plugin {
     Log.d(getLogTag(), "GET request completed, got data");
 
     String contentType = conn.getHeaderField("Content-Type");
-    String authorized = conn.getHeaderField("Authorized");
-    
-    Log.d(getLogTag(), "HTTP - Authorized action state: " + authorized);
 
-    if (authorized != null) {
-      if (authorized.contains("save")) {
-        Log.d(getLogTag(), "HTTP - Save tokens: " + authorized);
-        this.saveAuthToken("access_token", conn.getHeaderField("access_token"));
-        Log.d(getLogTag(), "HTTP - Save tokens access_token: " + conn.getHeaderField("access_token"));
-        this.saveAuthToken("refresh_token", conn.getHeaderField("refresh_token"));
-        Log.d(getLogTag(), "HTTP - Save tokens refresh_token: " + conn.getHeaderField("refresh_token"));
-      }
-      else if (authorized.contains("delete")) {
-        this.removeAuthTokens();
-      }
-    }
-    
+    // Auth
+    Boolean emptyData = this.checkAuthActionAndExecute(conn);
+
     if (contentType != null) {
       if (contentType.contains("application/json")) {
         try {
+
           JSObject jsonValue = new JSObject(builder.toString());
+          
+          if (emptyData) {
+            // Auth
+            jsonValue.put("access_token", "");
+            jsonValue.put("refresh_token", "");
+          }
+        
           ret.put("data", jsonValue);
         } catch (JSONException e) {
+
           JSArray jsonValue = new JSArray(builder.toString());
+
+          if (emptyData) {
+            // Auth
+            jsonValue = new JSArray("{[]}");
+          }
+
           ret.put("data", jsonValue);
         }
       } else {
-        ret.put("data", builder.toString());
+        //ret.put("data", builder.toString());
       }
     } else {
-      ret.put("data", builder.toString());
+      //ret.put("data", builder.toString());
     }
 
     call.resolve(ret);
@@ -516,36 +512,98 @@ public class Http extends Plugin {
     }
   }
 
-  private Boolean saveAuthToken(String key, String token) 
+  /*
+   * Auth hooks.
+   */
+
+  private String accessToken = null;
+  public static final String AUTH_ACCESS_TOKEN = "access_token";
+  public static final String AUTH_REFRESH_TOKEN = "refresh_token";
+
+  private String logoutIfActioned(String url) {
+    if (url.contains("logout")) {
+      this.removeAuthTokens();
+    }
+    
+    return url;
+  }
+
+  private JSObject appendBearerIfAvailable(JSObject headers) {
+    if (this.accessToken != null) {
+      headers.put("Authorization", "Bearer " + this.accessToken);
+      Log.d(getLogTag(), "access_token: "  + accessToken);
+    }
+  
+    return headers;
+  }
+
+  // Returns a bool which must decide if the response data should be visible (false) or NOT (true) to the javascript.
+  private Boolean checkAuthActionAndExecute(HttpURLConnection conn) {
+
+    String authAction = conn.getHeaderField("AuthAction");
+
+    if (authAction != null) {
+      if (authAction.contains("store")) {
+        Log.d(getLogTag(), "HTTP - Saving tokens.." + authAction);
+        this.setAuthToken("access_token", conn.getHeaderField(Http.AUTH_ACCESS_TOKEN));
+        this.setAuthToken("refresh_token", conn.getHeaderField(Http.AUTH_REFRESH_TOKEN));
+        return true;
+      }
+      else if (authAction.contains("delete")) {
+        this.removeAuthTokens();
+      }
+    }
+
+    return false;
+  }
+
+  private JSObject checkUrlForActionsAndModifyResponseData(String urlString, JSObject data) {
+    if (urlString.contains("refresh")) {
+      String refreshToken = this.getAuthToken("refresh_token");
+      data.put("refresh_token", refreshToken);
+      Log.d(getLogTag(), "HTTP - Sending refresh_token: "  + refreshToken);
+    }
+
+    return data;
+  }
+
+  // Save a token to storage.
+  private Boolean setAuthToken(String key, String token) 
   {
     SharedPreferences pref = getContext().getSharedPreferences("auth", 0); // 0 - for private mode
     Editor editor = pref.edit();
     editor.putString(key, token);
     editor.commit();
 
+    if (key == Http.AUTH_ACCESS_TOKEN) {
+      this.accessToken = token;
+    }
+
     return true;
   }
 
+  // Retrieve a token from storage.
   private String getAuthToken(String tokenKey)
   {
-    String accessToken = null;
+    String token = null;
 
-    try {
-      SharedPreferences pref = getContext().getSharedPreferences("auth", 0); // 0 - for private mode
-      accessToken = pref.getString(tokenKey, null);
-    }
-    catch (Exception $e) {
-      //
-    }
+    SharedPreferences pref = getContext().getSharedPreferences("auth", 0); // 0 - for private mode
+    token = pref.getString(tokenKey, null);
     
-    Log.d(getLogTag(), "HTTP - get token: " + accessToken);
+    Log.d(getLogTag(), "HTTP - get token: " + tokenKey + " = " + token);
 
-    return accessToken;
+    if (tokenKey == Http.AUTH_ACCESS_TOKEN) {
+      this.accessToken = token;
+    }
+
+    return token;
   }
 
+  // Empty stored tokens.
   private Boolean removeAuthTokens() {
-    this.saveAuthToken("access_token", "");
-    this.saveAuthToken("refresh_token", "");
+    Log.d(getLogTag(), "HTTP - Removing tokens..");
+    this.setAuthToken("access_token", "");
+    this.setAuthToken("refresh_token", "");
     return true;
   }
 }
