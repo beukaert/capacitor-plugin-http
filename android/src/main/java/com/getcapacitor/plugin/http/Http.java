@@ -53,12 +53,15 @@ public class Http extends Plugin {
   @Override
   public void load() {
     cookieManager = android.webkit.CookieManager.getInstance();
+
+    // Auth
     accessToken = this.getAuthToken(Http.AUTH_ACCESS_TOKEN);
   }
 
   @PluginMethod()
   public void request(PluginCall call) {
-    String url = call.getString("url");
+    // Auth AUTH_BASE_URL
+    String url = Http.AUTH_BASE_URL + call.getString("url");
     String method = call.getString("method");
     JSObject headers = call.getObject("headers");
     JSObject params = call.getObject("params");
@@ -519,6 +522,7 @@ public class Http extends Plugin {
   private String accessToken = null;
   public static final String AUTH_ACCESS_TOKEN = "access_token";
   public static final String AUTH_REFRESH_TOKEN = "refresh_token";
+  public static final String AUTH_BASE_URL = "http://192.168.178.25/api/v1/";
 
   private String logoutIfActioned(String url) {
     if (url.contains("logout")) {
