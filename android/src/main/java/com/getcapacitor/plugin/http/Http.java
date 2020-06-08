@@ -61,7 +61,7 @@ public class Http extends Plugin {
   @PluginMethod()
   public void request(PluginCall call) {
     // Auth AUTH_BASE_URL
-    String url = Http.AUTH_BASE_URL + call.getString("url");
+    String url = call.getString("url"); //Http.AUTH_BASE_URL + call.getString("url");
     String method = call.getString("method");
     JSObject headers = call.getObject("headers");
     JSObject params = call.getObject("params");
@@ -522,7 +522,7 @@ public class Http extends Plugin {
   private String accessToken = null;
   public static final String AUTH_ACCESS_TOKEN = "access_token";
   public static final String AUTH_REFRESH_TOKEN = "refresh_token";
-  public static final String AUTH_BASE_URL = "http://192.168.178.25/api/v1/";
+  //public static final String AUTH_BASE_URL = "http://192.168.178.25/api/v1/";
 
   private String logoutIfActioned(String url) {
     if (url.contains("logout")) {
