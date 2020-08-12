@@ -533,9 +533,12 @@ public class Http extends Plugin {
   }
 
   private JSObject appendBearerIfAvailable(JSObject headers) {
+    // Access token must be set; in addition, the Authorization header must be EXIST; no value required!
+    // This way the web client is in control over whether to add the token or not.
     if (this.accessToken != null) {
+      headers.getString("Authorization");
       headers.put("Authorization", "Bearer " + this.accessToken);
-      Log.d(getLogTag(), "access_token: "  + accessToken);
+      Log.d(getLogTag(), "access_token: " + accessToken);
     }
   
     return headers;
